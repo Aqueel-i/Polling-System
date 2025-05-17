@@ -1,35 +1,63 @@
 <?php
 require '../db.php';
 
+$poll_id = $_GET['id'] ?? null;
+if (!$poll_id) {
+    header('Location: dashboard.php');
+    exit;
+}
+
+// Fetch poll and options
+$stmt = $pdo->prepare("SELECT * FROM polls WHERE id = ?");
+$stmt->execute([$poll_id]);
+$poll = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!$poll) {
+    header('Location: dashboard.php');
+    exit;
+}
+
+$stmt = $pdo->prepare("SELECT * FROM options WHERE poll_id = ?");
+$stmt->execute([$poll_id]);
+$options = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
 $errors = [];
 $success = false;
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $question = trim($_POST['question'] ?? '');
-    $options = array_filter(array_map('trim', $_POST['options'] ?? []));
+    $new_options = array_filter(array_map('trim', $_POST['options'] ?? []));
 
     if (!$question) {
         $errors[] = "Poll question is required.";
     }
 
-    if (count($options) < 2) {
+    if (count($new_options) < 2) {
         $errors[] = "Please provide at least two options.";
     }
 
     if (!$errors) {
-        // Insert poll
-        $stmt = $pdo->prepare("INSERT INTO polls (question) VALUES (?)");
-        $stmt->execute([$question]);
-        $poll_id = $pdo->lastInsertId();
+        // Update question
+        $stmt = $pdo->prepare("UPDATE polls SET question = ? WHERE id = ?");
+        $stmt->execute([$question, $poll_id]);
 
-        // Insert options
-        $stmtOpt = $pdo->prepare("INSERT INTO options (poll_id, option_text) VALUES (?, ?)");
-        foreach ($options as $opt) {
-            $stmtOpt->execute([$poll_id, $opt]);
+        // Delete existing options
+        $stmt = $pdo->prepare("DELETE FROM options WHERE poll_id = ?");
+        $stmt->execute([$poll_id]);
+
+        // Insert new options with zero votes
+        $stmt = $pdo->prepare("INSERT INTO options (poll_id, option_text, votes) VALUES (?, ?, 0)");
+        foreach ($new_options as $opt) {
+            $stmt->execute([$poll_id, $opt]);
         }
 
         $success = true;
+
+        // Refresh options to show updated list
+        $stmt = $pdo->prepare("SELECT * FROM options WHERE poll_id = ?");
+        $stmt->execute([$poll_id]);
+        $options = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $poll['question'] = $question;
     }
 }
 
@@ -37,11 +65,11 @@ ob_start();
 ?>
 
 <div class="max-w-xl mx-auto bg-white p-8 rounded-lg shadow-md">
-    <h1 class="text-3xl font-bold mb-6 text-center text-blue-600">Create a New Poll</h1>
+    <h1 class="text-3xl font-bold mb-6 text-center text-blue-600">Edit Poll</h1>
 
     <?php if ($success): ?>
         <div class="mb-6 p-4 text-green-700 bg-green-100 border border-green-300 rounded">
-            Poll created successfully! <a href="dashboard.php" class="underline text-blue-600">Back to dashboard</a>.
+            Poll updated successfully! <a href="dashboard.php" class="underline text-blue-600">Back to dashboard</a>.
         </div>
     <?php endif; ?>
 
@@ -55,14 +83,14 @@ ob_start();
         </div>
     <?php endif; ?>
 
-    <form method="POST" id="pollForm" class="space-y-6">
+    <form method="POST" id="editPollForm" class="space-y-6">
         <div>
             <label for="question" class="block mb-2 font-semibold text-gray-700">Poll Question</label>
             <input
                 type="text"
                 id="question"
                 name="question"
-                value="<?= htmlspecialchars($_POST['question'] ?? '') ?>"
+                value="<?= htmlspecialchars($poll['question']) ?>"
                 class="w-full px-4 py-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="What do you want to ask?"
                 required
@@ -73,7 +101,7 @@ ob_start();
             <label class="block mb-2 font-semibold text-gray-700">Options</label>
             <div id="optionsContainer" class="space-y-3">
                 <?php
-                $oldOptions = $_POST['options'] ?? ['', ''];
+                $oldOptions = $_POST['options'] ?? array_map(fn($o) => $o['option_text'], $options);
                 $oldOptions = count($oldOptions) < 2 ? ['', ''] : $oldOptions;
                 foreach ($oldOptions as $index => $opt):
                 ?>
@@ -97,7 +125,7 @@ ob_start();
             type="submit"
             class="w-full py-3 bg-green-600 text-white font-semibold rounded hover:bg-green-700 transition"
         >
-            Create Poll
+            Update Poll
         </button>
     </form>
 </div>
@@ -142,5 +170,5 @@ document.querySelectorAll('.removeOptionBtn').forEach(btn => {
 
 <?php
 $content = ob_get_clean();
-$title = "Create Poll";
+$title = "Edit Poll";
 require 'layout.php';
